@@ -3,6 +3,6 @@ flask-cors
 gunicorn
 opencv-python-headless
 mediapipe==0.10.31
+protobuf>=4.25.0,<5
 numpy
 Pillow
-
