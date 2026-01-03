@@ -86,7 +86,7 @@ def process():
         return jsonify({"error": str(e)}), 500
 
 # ---------------- RUN (RENDER SAFE) ----------------
-if _name_ == "_main_":
+if __name__ == "__main__":
     print("🔥 API running (Render-safe, no 502)")
 
     # 🔥 SAFE warm-up (small dummy)
