@@ -1,7 +1,8 @@
 flask
 flask-cors
-numpy
-opencv-python-headless
-mediapipe
-Pillow
 gunicorn
+opencv-python-headless
+mediapipe==0.10.9
+protobuf==4.25.3
+numpy==1.26.4
+Pillow
