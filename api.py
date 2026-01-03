@@ -12,7 +12,7 @@ from eyedetector2_6 import AdvancedEyeSpectacleBackend
 from backend import spectacle_system
 
 # ---------------- APP SETUP ----------------
-app = Flask(_name_)
+app = Flask(__name__)
 CORS(app)
 
 # 🔥 HARD LIMIT — prevents Render worker kill
