@@ -13,11 +13,11 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, Optional
 
-from eyedetector2_6 import SpectacleEyeBackend, HEAD_TILT_LIMIT_DEG
+from eyedetector2_6 import AdvancedEyeSpectacleBackend, HEAD_TILT_LIMIT_DEG
 from frame import process_frame as progressive_process   # ✅ NEW
 
 app = FastAPI(title="Spectacle Eye API", version="1.0")
-backend = SpectacleEyeBackend()
+backend = AdvancedEyeSpectacleBackend()
 
 MIN_DIST_CM = 30.0
 MAX_DIST_CM = 60.0
@@ -199,3 +199,4 @@ async def analyze_image(image: UploadFile = File(...)):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("api:app", host="0.0.0.0", port=10000, reload=False)
+
