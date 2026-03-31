@@ -13,11 +13,11 @@ PUPIL_HISTORY_LEN = 10
 
 HEAD_TILT_LIMIT_DEG = 8.0
 
-# PD validation ranges
-MIN_VALID_PD_MM = 50
-MAX_VALID_PD_MM = 75
-MIN_VALID_HALF_PD_MM = 25
-MAX_VALID_HALF_PD_MM = 40
+# PD validation ranges (Broadened for more inclusivity)
+MIN_VALID_PD_MM = 40
+MAX_VALID_PD_MM = 85
+MIN_VALID_HALF_PD_MM = 20
+MAX_VALID_HALF_PD_MM = 45
 
 # Distance estimation config (must be calibrated for real accuracy)
 FOCAL_LENGTH_PX = 850  # device-specific constant (approx)
@@ -73,7 +73,7 @@ def weighted_average_position(history):
 
     x_avg = sum(pt[0] * wt for pt, wt in zip(history, weights))
     y_avg = sum(pt[1] * wt for pt, wt in zip(history, weights))
-    return (int(round(x_avg)), int(round(y_avg)))
+    return (float(x_avg), float(y_avg))
 
 
 def calculate_head_tilt_deg(face_landmarks, w, h, head_tilt_history: deque):
@@ -280,7 +280,20 @@ class SpectacleEyeBackend:
         self.left_iris_history = deque(maxlen=HISTORY_LEN)
         self.right_iris_history = deque(maxlen=HISTORY_LEN)
 
-    def process_frame(self, frame_bgr: np.ndarray) -> Dict[str, Any]:
+    def reset_history(self):
+        """Wipe all historical data for a clean static capture analysis."""
+        self.ipd_history.clear()
+        self.left_nose_history.clear()
+        self.right_nose_history.clear()
+        self.nose_line_history.clear()
+        self.scale_history.clear()
+        self.head_tilt_history.clear()
+        self.left_pupil_history.clear()
+        self.right_pupil_history.clear()
+        self.left_iris_history.clear()
+        self.right_iris_history.clear()
+
+    def process_frame(self, frame_bgr: np.ndarray, manual_left_pupil=None, manual_right_pupil=None) -> Dict[str, Any]:
         h, w = frame_bgr.shape[:2]
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
@@ -322,6 +335,7 @@ class SpectacleEyeBackend:
             # for overlays
             "auto_left_pupil": None,
             "auto_right_pupil": None,
+            "nose_center_px": None,
 
             "warnings": [],
         }
@@ -333,9 +347,9 @@ class SpectacleEyeBackend:
         face_landmarks = results.multi_face_landmarks[0]
 
         try:
-            raw_left = (int(face_landmarks.landmark[468].x * w), int(face_landmarks.landmark[468].y * h))
-            raw_right = (int(face_landmarks.landmark[473].x * w), int(face_landmarks.landmark[473].y * h))
-            nose_center = (int(face_landmarks.landmark[1].x * w), int(face_landmarks.landmark[1].y * h))
+            raw_left = (face_landmarks.landmark[468].x * w, face_landmarks.landmark[468].y * h)
+            raw_right = (face_landmarks.landmark[473].x * w, face_landmarks.landmark[473].y * h)
+            nose_center = (face_landmarks.landmark[1].x * w, face_landmarks.landmark[1].y * h)
 
             # sunglasses
             left_frame_blocking, right_frame_blocking, frame_conf = detect_sunglasses_or_frames(
@@ -362,8 +376,9 @@ class SpectacleEyeBackend:
             out["auto_left_pupil"] = auto_left
             out["auto_right_pupil"] = auto_right
 
-            final_left = auto_left
-            final_right = auto_right
+            # Use manual points if provided, otherwise fallback to auto
+            final_left = (float(manual_left_pupil[0]), float(manual_left_pupil[1])) if manual_left_pupil else auto_left
+            final_right = (float(manual_right_pupil[0]), float(manual_right_pupil[1])) if manual_right_pupil else auto_right
 
             # ✅ FIXED: left/right EYE INDICES were swapped in your file
             # MediaPipe standard:
@@ -375,20 +390,33 @@ class SpectacleEyeBackend:
             ear_left = eye_aspect_ratio(face_landmarks.landmark, left_eye_idx, w, h)
             ear_right = eye_aspect_ratio(face_landmarks.landmark, right_eye_idx, w, h)
 
-            left_open = ear_left > 0.20
-            right_open = ear_right > 0.20
+            # Lowered threshold to be more inclusive
+            left_open = ear_left > 0.15
+            right_open = ear_right > 0.15
             out["left_eye_open"] = bool(left_open)
             out["right_eye_open"] = bool(right_open)
 
             # iris px
-            left_iris_px = dist(
+            # Iris diameter: average of horizontal and vertical to handle head tilt/turn better
+            l_iris_h = dist(
                 (face_landmarks.landmark[469].x * w, face_landmarks.landmark[469].y * h),
                 (face_landmarks.landmark[471].x * w, face_landmarks.landmark[471].y * h),
             )
-            right_iris_px = dist(
+            l_iris_v = dist(
+                (face_landmarks.landmark[470].x * w, face_landmarks.landmark[470].y * h),
+                (face_landmarks.landmark[472].x * w, face_landmarks.landmark[472].y * h),
+            )
+            left_iris_px = (l_iris_h + l_iris_v) / 2.0
+
+            r_iris_h = dist(
                 (face_landmarks.landmark[474].x * w, face_landmarks.landmark[474].y * h),
                 (face_landmarks.landmark[476].x * w, face_landmarks.landmark[476].y * h),
             )
+            r_iris_v = dist(
+                (face_landmarks.landmark[475].x * w, face_landmarks.landmark[475].y * h),
+                (face_landmarks.landmark[477].x * w, face_landmarks.landmark[477].y * h),
+            )
+            right_iris_px = (r_iris_h + r_iris_v) / 2.0
 
             if left_iris_px > 0 and left_open:
                 self.left_iris_history.append(left_iris_px)
@@ -424,6 +452,7 @@ class SpectacleEyeBackend:
             if (scale_to_use is None) and iris_px > 0:
                 scale_to_use = float(IRIS_REAL_MM / iris_px)
 
+            print(f"DEBUG: iris_px={iris_px:.2f}, scale_to_use={scale_to_use}")
             out["scale_mm_per_px"] = scale_to_use
 
             # Distance
@@ -449,7 +478,8 @@ class SpectacleEyeBackend:
             else:
                 eye_line_y = h // 2
 
-            raw_nose_line_point = (nose_center[0], int(eye_line_y))
+            raw_nose_line_point = (nose_center[0], eye_line_y)
+
             self.nose_line_history.append(raw_nose_line_point)
             avg_nose_line_point = (
                 int(sum(pt[0] for pt in self.nose_line_history) / len(self.nose_line_history)),
@@ -467,6 +497,8 @@ class SpectacleEyeBackend:
                 left_to_nose_mm = dist(final_left, avg_nose_line_point) * scale_to_use
                 if is_valid_pd(left_to_nose_mm, half_pd=True):
                     self.left_nose_history.append(left_to_nose_mm)
+                else:
+                    print(f"DEBUG: Rejected Left PD: {left_to_nose_mm:.2f}")
                 if self.left_nose_history:
                     left_nose_avg = float(np.median(filter_outliers(list(self.left_nose_history))))
 
@@ -474,6 +506,8 @@ class SpectacleEyeBackend:
                 right_to_nose_mm = dist(final_right, avg_nose_line_point) * scale_to_use
                 if is_valid_pd(right_to_nose_mm, half_pd=True):
                     self.right_nose_history.append(right_to_nose_mm)
+                else:
+                    print(f"DEBUG: Rejected Right PD: {right_to_nose_mm:.2f}")
                 if self.right_nose_history:
                     right_nose_avg = float(np.median(filter_outliers(list(self.right_nose_history))))
 
@@ -481,12 +515,15 @@ class SpectacleEyeBackend:
                 ipd_mm = dist(final_left, final_right) * scale_to_use
                 if is_valid_pd(ipd_mm):
                     self.ipd_history.append(ipd_mm)
+                else:
+                    print(f"DEBUG: Rejected Total PD: {ipd_mm:.2f}")
                 if self.ipd_history:
                     ipd_mm_avg = float(np.median(filter_outliers(list(self.ipd_history))))
 
             out["pd_mm"] = float(ipd_mm_avg) if ipd_mm_avg else None
             out["pd_left_mm"] = float(left_nose_avg) if left_nose_avg else None
             out["pd_right_mm"] = float(right_nose_avg) if right_nose_avg else None
+            out["nose_center_px"] = list(avg_nose_line_point) if avg_nose_line_point else None
 
             if left_frame_blocking or right_frame_blocking:
                 out["warnings"].append("Frames/Sunglasses detected")
